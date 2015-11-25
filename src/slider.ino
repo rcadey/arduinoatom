@@ -4,7 +4,7 @@
 
  IMPROVEMENTS AND CONSIDERATIONS TOWARDS V1.0:ienc
  1) Efficy of submenu button response code for first three menu headers - DONE
- 2) Use of bulb shutter time as an extra menu option, passed to shutterDuration int
+ 2) Use of bulb shutter time as an extra menu option, passed to shutterDuration int - DONE
  3) shutter duration should be timed pause, not delay() - can't poll stop button! - HALF DONE
  4) Use EEPROM library functions to save quantities, can thus simplify the motion control section and use Reset as "stop" - DONE
  5) Remove switch from "Go" submenu, replace with more appropriate logic statement
@@ -65,7 +65,7 @@ int readLcdButtons() {
 //MENU GUI
 //define top-level menu item strings for numerical navigation
 char* menuItemsTop[] = {
-    "01 Distance(mm)>", "< 02 Duration >", "< 03 Frames > ", "< 04 Direction >", "< 05 Run"};
+    "01 Distance(mm)>", "< 02 Duration >", "< 03 Frames > ", "< 04 Direction >", "< 05 Shutter", "< 06 Run"};
 
 int currentMenuLevel = 0;      //top menu or submenu
 int currentMenuItem = 0;       //x-axis position of menu selection
@@ -84,12 +84,15 @@ long currentDistanceInt = 123;
 long currentDurationInt = 32567;
 long currentStepsInt = 141;
 int travelDir = 0;
+int shutterDurationInt = 1;
 
 int currentDistance[4] = {
     0, 0, 0, 0};
 int currentDuration[6] = {
     0, 0, 0, 0, 0, 0};
 int currentSteps[4] = {
+    0, 0, 0, 1};
+int shutterDuration[4] = {
     0, 0, 0, 1};
 
 int adjustDigit(int x, int dir){      //digit adjust function
@@ -131,20 +134,30 @@ int parseArraySteps(){
     return update;
 }
 
+int parseArrayShutter(){
+    for (int i = 0; i < 4; i++) {
+        currentChar = shutterDuration[i];
+        ThtuArr[i] = currentChar *  pow (10, (3-i));
+    }
+    shutterDurationInt = ThtuArr[0] + ThtuArr[1] + ThtuArr[2] + ThtuArr[3];
+    update = shutterDurationInt;
+    return update;
+}
+
 //MOTION CONTROL
 double totalMotorSteps = 0;
 double pulseDelay = 0;
 int intervalDistance = 0;           //number of motor steps contained within a camera step
 int currentStep = 0;        //number of motor steps thus far
 int motion = 0;             // motion = 1 if stop hasn't been pressed
-int shutterDuration = 1; //length of time for the camera to stop at shot steps in seconds - variable up to 20s
+//int shutterDuration = 1; //length of time for the camera to stop at shot steps in seconds - variable up to 20s
 elapsedMillis timer0;
 
 int motionControl() {
     Serial.begin(9600);
     int currentStep = 0;        //number of motor steps thus far - //**** is this the right thing to do?
     totalMotorSteps = currentDistanceInt * 5; //calculate total steps (0.2mm = 20-tooth gear on 2mm pitch belt; 40mm per rev, 200 steps per rev, ergo 1/5th mm per step)
-    pulseDelay = (1000L * (currentDurationInt - (currentStepsInt * shutterDuration))) / totalMotorSteps; //how long to pause in ms between STP pulses to the motor driver
+    pulseDelay = (1000L * (currentDurationInt - (currentStepsInt * shutterDurationInt))) / totalMotorSteps; //how long to pause in ms between STP pulses to the motor driver
     intervalDistance = totalMotorSteps / currentStepsInt;
 
     //once per overall run
@@ -170,7 +183,7 @@ int motionControl() {
             delay(80);
             digitalWrite(trig, LOW);    //reset trigger pin
             Serial.println("camera");
-            delay((shutterDuration * 1000)-80); //delay needs changing to timer so stop button can be polled
+            delay((shutterDurationInt * 1000)-80); //delay needs changing to timer so stop button can be polled
         }
 
     }
@@ -206,6 +219,7 @@ struct SavedData {
     double field2;
     double field3;
     int field4;
+    int field5;
 };
 
 void saveData() {
@@ -215,6 +229,7 @@ void saveData() {
     data.field2 = currentDurationInt;
     data.field3 = currentStepsInt;
     data.field4 = travelDir;
+    data.field5 = shutterDurationInt;
     EEPROM.put(eeAddress,data);
 }
 
@@ -227,6 +242,7 @@ void readData() {
     currentDurationInt = data.field2;
     currentStepsInt = data.field3;
     travelDir = data.field4;
+    shutterDurationInt = data.field5;
 }
 
 //********************** main setup **************************
@@ -237,6 +253,7 @@ void setup() {
     intToArray4 (currentDistance, currentDistanceInt);
     intToArray6 (currentDuration, currentDurationInt);
     intToArray4 (currentSteps, currentStepsInt);
+    intToArray4 (shutterDuration, shutterDurationInt);
 
     lcd.begin(16, 2);               // initialise LCD lib full-screen
     lcd.setCursor(0,0);             // set cursor position
@@ -292,7 +309,7 @@ void loop() {
 
             case  btnR:
             {
-                if (currentMenuItem == 4) break;      //can't go right from here
+                if (currentMenuItem == 5) break;      //can't go right from here
                 else  currentMenuItem++;
                 break;
             }
@@ -302,7 +319,7 @@ void loop() {
                 currentMenuLevel++;
                 if (currentCursorPos > 3 && (currentMenuItem == 0 || currentMenuItem == 2)) currentCursorPos = 3; //don't go off the end of the numbers for the 4-digit numbers
                 if (currentCursorPos > 0 && (currentMenuItem > 2)) currentCursorPos = 0; // set blinking cursor to left for text-based options
-                if (currentMenuItem == 4) {
+                if (currentMenuItem == 5) {
                     saveData();
                     motion = 1;
                     motionControl();
@@ -458,7 +475,48 @@ void loop() {
             }  //end switch
         } //end 04 DIRECTION
 
-        else if (currentMenuItem == 4) {    // 05 GO
+        else if (currentMenuItem == 4) {    //02 DURATION
+
+            switch (btnVal) {
+                case btnUp:
+                {
+                    currentChar = shutterDuration[currentCursorPos];
+                    adjustDigit(currentChar, 1);
+                    shutterDuration[currentCursorPos] = currentChar;
+                    break;
+                }
+
+                case btnDn:
+                {
+                    currentChar = shutterDuration[currentCursorPos];
+                    adjustDigit(currentChar, 0);
+                    shutterDuration[currentCursorPos] = currentChar;
+                    break;
+                }
+
+                case btnL:
+                {
+                    if (currentCursorPos == 0) break;      //can't go left from here
+                    else currentCursorPos--;
+                    break;
+                }
+
+                case btnR:
+                {
+                    if (currentCursorPos == 5) break;      //can't go left from here
+                    else currentCursorPos++;
+                    break;
+                }
+
+                case btnSel:
+                {
+                    parseArrayShutter();
+                    currentMenuLevel--;
+                }
+            }  //end switch
+        } //end 02 DURATION
+
+        else if (currentMenuItem == 5) {    // 05 GO
 
             switch (btnVal) {
                 case btnUp:
@@ -535,6 +593,15 @@ void loop() {
         }
 
         case 4:
+        {
+            for (int i = 0; i < 4; i++) {
+                lcd.setCursor(i, 1);
+                lcd.print(shutterDuration[i]);
+            }
+            break;
+        }
+
+        case 5:
         {
             lcd.print("Stop!");
             break;
